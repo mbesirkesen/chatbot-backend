@@ -3,7 +3,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from app.core.config import get_settings
 from app.core.logging import logger
-from app.services.vector_store import VectorStoreService
+from app.domain.interfaces import IVectorStore
 
 settings = get_settings()
 
@@ -26,9 +26,18 @@ rag_prompt = ChatPromptTemplate.from_messages([
 
 
 class RAGService:
+    """
+    RAG (Retrieval-Augmented Generation) servisi.
+    
+    Kullanıcı sorularını vektör aramasıyla zenginleştirip
+    LLM'e gönderir.
+    """
 
-    @classmethod
-    def _get_llm(cls) -> ChatGoogleGenerativeAI:
+    def __init__(self, vector_store: IVectorStore):
+        self._vector_store = vector_store
+
+    def _get_llm(self) -> ChatGoogleGenerativeAI:
+        """LLM instance döner."""
         return ChatGoogleGenerativeAI(
             model=settings.GEMINI_MODEL,
             google_api_key=settings.GEMINI_API_KEY,
@@ -36,23 +45,33 @@ class RAGService:
             max_output_tokens=2048,
         )
 
-    @classmethod
-    async def ask(cls, question: str, n_results: int = 5) -> dict:
+    async def ask(self, question: str, n_results: int = 5) -> dict:
+        """
+        Kullanıcı sorusuna RAG ile yanıt verir.
+        
+        Args:
+            question: Kullanıcı sorusu
+            n_results: Vektör aramasında döndürülecek sonuç sayısı
+            
+        Returns:
+            answer: LLM yanıtı
+            source_ids: Kullanılan kaynak tarif ID'leri
+        """
         logger.info("RAG sorgusu başlatıldı: '%s'", question)
 
-        relevant_docs = await VectorStoreService.search(question, n_results=n_results)
+        relevant_docs = await self._vector_store.search(question, n_results=n_results)
 
         if not relevant_docs:
             logger.warning("Vektör aramasında sonuç bulunamadı: '%s'", question)
             return {
                 "answer": "Üzgünüm, bu konuda veritabanımda yeterli tarif bulamadım. "
                           "Lütfen farklı bir soru sormayı deneyin.",
-                "sources": [],
+                "source_ids": [],
             }
 
         context = "\n\n---\n\n".join(doc["text"] for doc in relevant_docs)
 
-        llm = cls._get_llm()
+        llm = self._get_llm()
         chain = rag_prompt | llm
 
         response = await chain.ainvoke({

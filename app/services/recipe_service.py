@@ -1,122 +1,95 @@
-import uuid
-
-from sqlalchemy import select, or_, func
-from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import UUID
 
 from app.core.logging import logger
 from app.models.recipe import Recipe
 from app.schemas.recipe import RecipeCreate, RecipeUpdate
+from app.repositories import RecipeRepository
+from app.services.decorators import sync_to_vector_store
+from app.domain.interfaces import IVectorStore
 
 
 class RecipeService:
+    """
+    Tarif iş mantığı servisi.
+    
+    Repository pattern ve Dependency Injection kullanarak
+    SOLID prensiplerine uygun tasarlanmıştır.
+    """
 
-    @staticmethod
-    async def create(db: AsyncSession, data: RecipeCreate) -> Recipe:
-        recipe = Recipe(**data.model_dump())
-        db.add(recipe)
-        await db.flush()
-        await db.refresh(recipe)
+    def __init__(
+        self,
+        repo: RecipeRepository,
+        vector_svc: IVectorStore | None = None,
+    ):
+        self._repo = repo
+        self._vector_svc = vector_svc
+
+    async def get_by_id(self, recipe_id: UUID) -> Recipe | None:
+        """ID ile tarif getirir."""
+        return await self._repo.get_by_id(recipe_id)
+
+    async def get_all(self, skip: int = 0, limit: int = 20) -> list[Recipe]:
+        """Tüm tarifleri sayfalı olarak getirir."""
+        return await self._repo.get_all(skip=skip, limit=limit)
+
+    @sync_to_vector_store
+    async def create(self, data: RecipeCreate) -> Recipe:
+        """
+        Yeni tarif oluşturur.
+        
+        @sync_to_vector_store decorator'ı sayesinde otomatik olarak
+        vektör veritabanıyla senkronize edilir.
+        """
+        recipe = await self._repo.create(data)
         logger.info("Yeni tarif oluşturuldu: %s (id=%s)", recipe.title, recipe.id)
         return recipe
 
-    @staticmethod
-    async def get_by_id(db: AsyncSession, recipe_id: uuid.UUID) -> Recipe | None:
-        result = await db.execute(select(Recipe).where(Recipe.id == recipe_id))
-        return result.scalar_one_or_none()
-
-    @staticmethod
-    async def get_all(
-        db: AsyncSession, skip: int = 0, limit: int = 20
-    ) -> list[Recipe]:
-        result = await db.execute(
-            select(Recipe).order_by(Recipe.created_at.desc()).offset(skip).limit(limit)
-        )
-        return list(result.scalars().all())
-
-    @staticmethod
-    async def update(
-        db: AsyncSession, recipe_id: uuid.UUID, data: RecipeUpdate
-    ) -> Recipe | None:
-        recipe = await RecipeService.get_by_id(db, recipe_id)
-        if not recipe:
-            return None
-
-        update_data = data.model_dump(exclude_unset=True)
-        for field, value in update_data.items():
-            setattr(recipe, field, value)
-
-        await db.flush()
-        await db.refresh(recipe)
-        logger.info("Tarif güncellendi: %s (id=%s)", recipe.title, recipe.id)
+    @sync_to_vector_store
+    async def update(self, recipe_id: UUID, data: RecipeUpdate) -> Recipe | None:
+        """
+        Tarifi günceller.
+        
+        @sync_to_vector_store decorator'ı sayesinde otomatik olarak
+        vektör veritabanıyla senkronize edilir.
+        """
+        recipe = await self._repo.update(recipe_id, data)
+        if recipe:
+            logger.info("Tarif güncellendi: %s (id=%s)", recipe.title, recipe.id)
         return recipe
 
-    @staticmethod
-    async def delete(db: AsyncSession, recipe_id: uuid.UUID) -> bool:
-        recipe = await RecipeService.get_by_id(db, recipe_id)
-        if not recipe:
-            return False
-        await db.delete(recipe)
-        await db.flush()
-        logger.info("Tarif silindi: id=%s", recipe_id)
-        return True
+    async def delete(self, recipe_id: UUID) -> bool:
+        """Tarifi siler ve vektör veritabanından kaldırır."""
+        deleted = await self._repo.delete(recipe_id)
+        if deleted and self._vector_svc:
+            try:
+                await self._vector_svc.delete_recipe(str(recipe_id))
+            except Exception as e:
+                logger.error("Vektör veritabanından silme başarısız: %s", e)
+        return deleted
 
-    @staticmethod
-    async def search_by_title(
-        db: AsyncSession, query: str, limit: int = 10
-    ) -> list[Recipe]:
-        result = await db.execute(
-            select(Recipe)
-            .where(func.lower(Recipe.title).contains(query.lower()))
-            .limit(limit)
-        )
-        return list(result.scalars().all())
-
-    @staticmethod
-    async def search_by_ingredients(
-        db: AsyncSession, ingredients: list[str], limit: int = 10
-    ) -> list[Recipe]:
-        """Verilen malzemelerden herhangi birini içeren tarifleri bulur."""
-        conditions = [
-            Recipe.ingredients.any(func.lower(ing.lower()))
-            for ing in ingredients
-        ]
-        result = await db.execute(
-            select(Recipe).where(or_(*conditions)).limit(limit)
-        )
-        return list(result.scalars().all())
-
-    @staticmethod
     async def search(
-        db: AsyncSession,
+        self,
         query: str | None = None,
         ingredients: list[str] | None = None,
         cuisine: str | None = None,
         category: str | None = None,
         limit: int = 10,
     ) -> list[Recipe]:
-        stmt = select(Recipe)
+        """Çoklu kriterlere göre tarif arar."""
+        return await self._repo.search(
+            query=query,
+            ingredients=ingredients,
+            cuisine=cuisine,
+            category=category,
+            limit=limit,
+        )
 
-        filters = []
-        if query:
-            filters.append(
-                or_(
-                    func.lower(Recipe.title).contains(query.lower()),
-                    func.lower(Recipe.description).contains(query.lower()),
-                )
-            )
-        if ingredients:
-            ingredient_conditions = [
-                Recipe.ingredients.any(func.lower(ing.lower()))
-                for ing in ingredients
-            ]
-            filters.append(or_(*ingredient_conditions))
-        if cuisine:
-            filters.append(func.lower(Recipe.cuisine) == cuisine.lower())
-        if category:
-            filters.append(func.lower(Recipe.category) == category.lower())
+    async def search_by_title(self, query: str, limit: int = 10) -> list[Recipe]:
+        """Başlığa göre tarif arar."""
+        return await self._repo.search_by_title(query, limit)
 
-        if filters:
-            stmt = stmt.where(*filters)
-
-        result = await db.execute(stmt.limit(limit))
-        return list(result.scalars().all())
+    async def search_by_ingredients(
+        self, ingredients: list[str], limit: int = 10
+    ) -> list[Recipe]:
+        """Malzemelere göre tarif arar."""
+        return await self._repo.search_by_ingredients(ingredients, limit)

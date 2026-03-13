@@ -9,8 +9,8 @@ from app.core.exceptions import (
     AppException,
     app_exception_handler,
     generic_exception_handler,
-    RequestLoggingMiddleware,
 )
+from app.core.middleware import RequestLoggingMiddleware
 from app.core.logging import logger
 from app.api.v1.router import api_router
 

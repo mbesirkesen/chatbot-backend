@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.logging import logger
 from app.schemas.recipe import ChatRequest, ChatResponse, RecipeResponse
-from app.services.rag_service import RAGService
-from app.services.recipe_service import RecipeService
+from app.api.dependencies import get_rag_service, get_recipe_service
+from app.services import RAGService, RecipeService
 
 router = APIRouter(prefix="/chat", tags=["Sohbet"])
 
@@ -15,12 +15,14 @@ router = APIRouter(prefix="/chat", tags=["Sohbet"])
 @router.post("/", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
-    db: AsyncSession = Depends(get_db),
+    rag_service: RAGService = Depends(get_rag_service),
+    recipe_service: RecipeService = Depends(get_recipe_service),
 ):
+    """Kullanıcı mesajına RAG ile yanıt verir."""
     logger.info("Yeni sohbet mesajı: '%s'", request.message)
 
     try:
-        rag_result = await RAGService.ask(request.message)
+        rag_result = await rag_service.ask(request.message)
     except Exception as e:
         logger.error("RAG servisi hatası: %s", e)
         raise HTTPException(
@@ -31,7 +33,7 @@ async def chat(
     sources: list[RecipeResponse] = []
     for source_id in rag_result.get("source_ids", []):
         try:
-            recipe = await RecipeService.get_by_id(db, uuid.UUID(source_id))
+            recipe = await recipe_service.get_by_id(uuid.UUID(source_id))
             if recipe:
                 sources.append(RecipeResponse.model_validate(recipe))
         except (ValueError, Exception) as e:

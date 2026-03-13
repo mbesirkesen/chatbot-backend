@@ -9,12 +9,23 @@ settings = get_settings()
 
 
 class VectorStoreService:
+    """
+    ChromaDB vektör veritabanı servisi.
+    
+    Tarifleri embedding'lere dönüştürüp vektör veritabanında saklar
+    ve benzerlik araması yapar.
+    """
+
     _client: chromadb.ClientAPI | None = None
     _collection: chromadb.Collection | None = None
     _embeddings: GoogleGenerativeAIEmbeddings | None = None
 
+    def __init__(self):
+        pass
+
     @classmethod
     def _get_embeddings(cls) -> GoogleGenerativeAIEmbeddings:
+        """Embedding modeli singleton olarak döner."""
         if cls._embeddings is None:
             cls._embeddings = GoogleGenerativeAIEmbeddings(
                 model=settings.EMBEDDING_MODEL,
@@ -24,6 +35,7 @@ class VectorStoreService:
 
     @classmethod
     def _get_client(cls) -> chromadb.ClientAPI:
+        """ChromaDB client singleton olarak döner."""
         if cls._client is None:
             cls._client = chromadb.PersistentClient(
                 path=settings.CHROMA_PERSIST_DIR,
@@ -34,6 +46,7 @@ class VectorStoreService:
 
     @classmethod
     def _get_collection(cls) -> chromadb.Collection:
+        """ChromaDB collection singleton olarak döner."""
         if cls._collection is None:
             client = cls._get_client()
             cls._collection = client.get_or_create_collection(
@@ -47,12 +60,14 @@ class VectorStoreService:
             )
         return cls._collection
 
-    @classmethod
-    async def add_recipe(cls, recipe_id: str, text: str, metadata: dict | None = None) -> None:
-        embeddings = cls._get_embeddings()
+    async def add_recipe(
+        self, recipe_id: str, text: str, metadata: dict | None = None
+    ) -> None:
+        """Tarifi vektör veritabanına ekler/günceller."""
+        embeddings = self._get_embeddings()
         vector = await embeddings.aembed_query(text)
 
-        collection = cls._get_collection()
+        collection = self._get_collection()
         collection.upsert(
             ids=[recipe_id],
             embeddings=[vector],
@@ -61,12 +76,12 @@ class VectorStoreService:
         )
         logger.info("Tarif vektör veritabanına eklendi: %s", recipe_id)
 
-    @classmethod
-    async def search(cls, query: str, n_results: int = 5) -> list[dict]:
-        embeddings = cls._get_embeddings()
+    async def search(self, query: str, n_results: int = 5) -> list[dict]:
+        """Sorguya benzer dokümanları arar."""
+        embeddings = self._get_embeddings()
         query_vector = await embeddings.aembed_query(query)
 
-        collection = cls._get_collection()
+        collection = self._get_collection()
         results = collection.query(
             query_embeddings=[query_vector],
             n_results=n_results,
@@ -85,12 +100,24 @@ class VectorStoreService:
         logger.info("Vektör araması tamamlandı: '%s' -> %d sonuç", query, len(documents))
         return documents
 
-    @classmethod
-    async def delete_recipe(cls, recipe_id: str) -> None:
-        collection = cls._get_collection()
+    async def delete_recipe(self, recipe_id: str) -> None:
+        """Tarifi vektör veritabanından siler."""
+        collection = self._get_collection()
         collection.delete(ids=[recipe_id])
         logger.info("Tarif vektör veritabanından silindi: %s", recipe_id)
 
-    @classmethod
-    def get_collection_count(cls) -> int:
-        return cls._get_collection().count()
+    async def sync_recipe(self, recipe) -> None:
+        """
+        Tarifi vektör veritabanıyla senkronize eder.
+        
+        Bu metod decorator tarafından otomatik çağrılır.
+        """
+        await self.add_recipe(
+            recipe_id=str(recipe.id),
+            text=recipe.to_document_text(),
+            metadata={"title": recipe.title, "cuisine": recipe.cuisine or ""},
+        )
+
+    def get_collection_count(self) -> int:
+        """Koleksiyondaki döküman sayısını döner."""
+        return self._get_collection().count()
