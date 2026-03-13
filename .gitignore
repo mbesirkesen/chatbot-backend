@@ -12,6 +12,7 @@ venv/
 env/
 
 chroma_data/
+data/
 
 *.db
 *.sqlite3

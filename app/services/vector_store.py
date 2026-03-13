@@ -46,18 +46,23 @@ class VectorStoreService:
 
     @classmethod
     def _get_collection(cls) -> chromadb.Collection:
-        """ChromaDB collection singleton olarak döner."""
+        """ChromaDB collection singleton olarak döner. Önceden oluşturulmuş DB'deki ilk koleksiyonu kullanır."""
         if cls._collection is None:
             client = cls._get_client()
-            cls._collection = client.get_or_create_collection(
-                name=settings.CHROMA_COLLECTION_NAME,
-                metadata={"hnsw:space": "cosine"},
-            )
-            logger.info(
-                "ChromaDB koleksiyonu hazır: '%s' (%d döküman)",
-                settings.CHROMA_COLLECTION_NAME,
-                cls._collection.count(),
-            )
+            try:
+                cls._collection = client.get_collection(name=settings.CHROMA_COLLECTION_NAME)
+                logger.info("ChromaDB koleksiyonu hazır: '%s' (%d döküman)", settings.CHROMA_COLLECTION_NAME, cls._collection.count())
+            except Exception:
+                collections = client.list_collections()
+                if collections:
+                    cls._collection = collections[0]
+                    logger.info("Mevcut koleksiyon kullanılıyor: '%s' (%d döküman)", cls._collection.name, cls._collection.count())
+                else:
+                    cls._collection = client.create_collection(
+                        name=settings.CHROMA_COLLECTION_NAME,
+                        metadata={"hnsw:space": "cosine"},
+                    )
+                    logger.info("Yeni koleksiyon oluşturuldu: '%s'", settings.CHROMA_COLLECTION_NAME)
         return cls._collection
 
     async def add_recipe(
