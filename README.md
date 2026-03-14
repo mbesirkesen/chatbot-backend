@@ -8,7 +8,8 @@ Yapay zeka destekli yemek tarifi chatbot backend servisi. RAG (Retrieval-Augment
 - **Veritabanı**: PostgreSQL + SQLAlchemy (async)
 - **Vektör DB**: ChromaDB
 - **LLM**: Google Gemini
-- **Embeddings**: Google Generative AI Embeddings
+- **Embeddings**: Google (yeni DB) veya sentence-transformers (önceden oluşturulmuş DB, örn. turkish_recipes)
+- **Çeviri**: deep-translator (sorgu → İngilizce, veritabanı uyumu)
 
 ---
 
@@ -36,8 +37,8 @@ Bu proje **Clean Architecture** prensiplerine uygun katmanlı bir yapı kullanı
 **Veri Akışı:**
 ```
 Request → Endpoint → Service → Repository → Database
-                  ↘ VectorStore → ChromaDB
-                  ↘ RAGService → Gemini API
+                  ↘ RAGService → Translation (query → EN) → VectorStore → ChromaDB
+                            ↘ Gemini API (cevap kullanıcı dilinde)
 ```
 
 ---
@@ -92,7 +93,11 @@ app/
     ├── decorators.py            # @sync_to_vector_store
     ├── recipe_service.py        # RecipeService
     ├── rag_service.py           # RAGService
+    ├── translation.py           # Çok dilli: normalize_query, translate_query_for_search
     └── vector_store.py          # VectorStoreService
+
+data/                            # Veri setleri (turkish_recipes_db)
+scripts/test_gemini_models.py    # Gemini model testi: python scripts/test_gemini_models.py
 ```
 
 ---
@@ -134,6 +139,7 @@ Yeni kod yazarken bu dosyaları örnek al:
 | Yeni schema | `app/schemas/recipe.py` |
 | Yeni exception | `app/core/exceptions/base.py` |
 | Yeni dependency | `app/api/dependencies.py` |
+| Çeviri / dil | `app/services/translation.py` |
 
 ---
 
@@ -432,6 +438,19 @@ class RecipeService:
 
 ---
 
+## Çok Dilli Destek
+
+Veritabanı İngilizce olduğu için RAG akışında:
+
+1. **Sorgu normalizasyonu**: Türkçe karakterler (ç, ğ, ı, ö, ş, ü) ASCII'ye çevrilir.
+2. **Çeviri**: Sorgu İngilizceye çevrilir (deep-translator).
+3. **Vektör arama**: ChromaDB'de İngilizce sorgu ile aranır.
+4. **Cevap**: LLM, kullanıcının yazdığı dilde yanıt verir.
+
+Örnek: "mercimek çorbası nasıl yapılır?" → "How to make lentil soup?" → arama → Türkçe cevap.
+
+---
+
 ## Mevcut API Endpoint'leri
 
 | Method | Endpoint | Açıklama |
@@ -478,10 +497,12 @@ Değerler `.env` dosyasından okunur:
 | GEMINI_API_KEY | Evet | - | Google Gemini API anahtarı |
 | DEBUG | Hayır | False | Debug modu |
 | LOG_LEVEL | Hayır | INFO | Log seviyesi |
-| GEMINI_MODEL | Hayır | gemini-2.0-flash | Gemini model adı |
-| CHROMA_PERSIST_DIR | Hayır | ./chroma_data | ChromaDB dizini |
-| CHROMA_COLLECTION_NAME | Hayır | recipes | ChromaDB koleksiyon adı |
-| EMBEDDING_MODEL | Hayır | models/embedding-001 | Embedding modeli |
+| GEMINI_MODEL | Hayır | gemini-2.5-flash | Gemini model adı |
+| CHROMA_PERSIST_DIR | Hayır | ./chroma_data | ChromaDB dizini (turkish_recipes: ./data/turkish_recipes_db) |
+| CHROMA_COLLECTION_NAME | Hayır | recipes | ChromaDB koleksiyon adı (turkish_recipes: turkish_recipes_collection) |
+| EMBEDDING_PROVIDER | Hayır | google | google veya sentence_transformer |
+| EMBEDDING_MODEL_SENTENCE_TRANSFORMER | Hayır | all-MiniLM-L6-v2 | Önceden oluşturulmuş DB için |
+| EMBEDDING_MODEL | Hayır | models/embedding-001 | Google embedding (EMBEDDING_PROVIDER=google için) |
 
 ---
 
