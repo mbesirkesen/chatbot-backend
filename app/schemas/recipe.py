@@ -52,8 +52,14 @@ class RecipeSearchQuery(BaseModel):
     limit: int = Field(10, ge=1, le=50)
 
 
+class ChatMessage(BaseModel):
+    role: str = Field(..., pattern="^(user|assistant)$")
+    content: str = Field(..., min_length=1)
+
+
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, examples=["Elimde tavuk ve pirinç var, ne yapabilirim?"])
+    history: list[ChatMessage] = Field(default_factory=list, max_length=20)
 
 
 class ChatResponse(BaseModel):

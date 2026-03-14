@@ -21,8 +21,9 @@ async def chat(
     """Kullanıcı mesajına RAG ile yanıt verir."""
     logger.info("Yeni sohbet mesajı: '%s'", request.message)
 
+    history = [{"role": m.role, "content": m.content} for m in request.history]
     try:
-        rag_result = await rag_service.ask(request.message)
+        rag_result = await rag_service.ask(request.message, history=history)
     except Exception as e:
         logger.error("RAG servisi hatası: %s", e)
         raise HTTPException(

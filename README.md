@@ -449,6 +449,22 @@ Veritabanı İngilizce olduğu için RAG akışında:
 
 Örnek: "mercimek çorbası nasıl yapılır?" → "How to make lentil soup?" → arama → Türkçe cevap.
 
+### Sohbet Geçmişi (Chat Memory)
+
+Client her istekte `history` göndererek önceki mesajları iletir. LLM bağlamı korur.
+
+```json
+{
+  "message": "Şunu yapmak istiyorum",
+  "history": [
+    {"role": "user", "content": "Tavuklu yemek istiyorum"},
+    {"role": "assistant", "content": "Şunları yapabilirsin: Chicken Panini, ..."}
+  ]
+}
+```
+
+Maksimum 20 mesaj (`history` + yeni mesaj) gönderilebilir.
+
 ---
 
 ## Mevcut API Endpoint'leri
@@ -463,7 +479,7 @@ Veritabanı İngilizce olduğu için RAG akışında:
 | PUT | `/api/v1/recipes/{id}` | Tarif güncelle |
 | DELETE | `/api/v1/recipes/{id}` | Tarif sil |
 | POST | `/api/v1/recipes/search` | Tarif ara |
-| POST | `/api/v1/chat/` | RAG sohbet |
+| POST | `/api/v1/chat/` | RAG sohbet (history ile çok turlu konuşma) |
 
 ---
 

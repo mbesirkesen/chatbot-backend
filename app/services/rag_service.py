@@ -1,5 +1,5 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from app.core.config import get_settings
 from app.core.logging import logger
@@ -14,17 +14,24 @@ Answer the user's question based ONLY on the recipes below.
 If the recipes don't contain enough relevant info, say so honestly.
 
 IMPORTANT: Respond in the SAME LANGUAGE the user wrote their question in.
-(e.g. Turkish question -> Turkish answer, English question -> English answer)
+
+When the user asks for a recipe or how to make something, include ALL relevant details from the recipes:
+- Ingredients (malzemeler) - list them clearly
+- Instructions (yapılış) - step by step
+- Prep time and cook time (hazırlık/pişirme süresi) - in minutes if available
+- Servings (kişi sayısı), difficulty (zorluk) if available
+
+If the user refers to something from earlier (e.g. "that one", "şunu", "bunu"), 
+use the conversation history to understand what they mean.
 
 ### Recipes found:
 {context}
 """
 
-RAG_USER_PROMPT = "{question}"
-
 rag_prompt = ChatPromptTemplate.from_messages([
     ("system", RAG_SYSTEM_PROMPT),
-    ("human", RAG_USER_PROMPT),
+    MessagesPlaceholder(variable_name="history"),
+    ("human", "{question}"),
 ])
 
 
@@ -48,21 +55,45 @@ class RAGService:
             max_output_tokens=2048,
         )
 
-    async def ask(self, question: str, n_results: int = 5) -> dict:
+    def _build_search_query(self, question: str, history: list[dict]) -> str:
         """
-        Kullanıcı sorusuna RAG ile yanıt verir.
+        Takip mesajları için ('şunu yapmak istiyorum' vb.) önceki bağlamı ekler.
+        Vektör aramasında daha iyi eşleşme sağlar.
+        """
+        if not history:
+            return question
+        last_user = None
+        for m in reversed(history):
+            if m.get("role") == "user":
+                last_user = m.get("content", "").strip()
+                break
+        if last_user and last_user != question:
+            return f"{last_user} {question}"
+        return question
+
+    async def ask(
+        self,
+        question: str,
+        history: list[dict] | None = None,
+        n_results: int = 5,
+    ) -> dict:
+        """
+        Kullanıcı sorusuna RAG ile yanıt verir. Sohbet geçmişi varsa bağlama dahil eder.
         
         Args:
             question: Kullanıcı sorusu
+            history: Önceki mesajlar [{"role":"user"|"assistant","content":"..."}]
             n_results: Vektör aramasında döndürülecek sonuç sayısı
             
         Returns:
             answer: LLM yanıtı
             source_ids: Kullanılan kaynak tarif ID'leri
         """
-        logger.info("RAG sorgusu başlatıldı: '%s'", question)
+        history = history or []
+        logger.info("RAG sorgusu: '%s' (geçmiş: %d mesaj)", question, len(history))
 
-        search_query = await translate_query_for_search(question)
+        combined_for_search = self._build_search_query(question, history)
+        search_query = await translate_query_for_search(combined_for_search)
         relevant_docs = await self._vector_store.search(search_query, n_results=n_results)
 
         if not relevant_docs:
@@ -74,11 +105,20 @@ class RAGService:
 
         context = "\n\n---\n\n".join(doc["text"] for doc in relevant_docs)
 
+        from langchain_core.messages import HumanMessage, AIMessage
+        history_msgs = []
+        for m in history:
+            if m.get("role") == "user":
+                history_msgs.append(HumanMessage(content=m.get("content", "")))
+            elif m.get("role") == "assistant":
+                history_msgs.append(AIMessage(content=m.get("content", "")))
+
         llm = self._get_llm()
         chain = rag_prompt | llm
 
         response = await chain.ainvoke({
             "context": context,
+            "history": history_msgs,
             "question": question,
         })
 
