@@ -1,3 +1,5 @@
+import asyncio
+
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -8,29 +10,53 @@ from app.core.logging import logger
 settings = get_settings()
 
 
+class _SentenceTransformerEmbeddingAdapter:
+    """all-MiniLM-L6-v2 ile uyumlu önceden oluşturulmuş ChromaDB koleksiyonları için."""
+
+    def __init__(self, model_name: str):
+        from sentence_transformers import SentenceTransformer
+        self._model = SentenceTransformer(model_name)
+
+    async def aembed_query(self, text: str) -> list[float]:
+        loop = asyncio.get_event_loop()
+        vector = await loop.run_in_executor(None, lambda: self._model.encode(text).tolist())
+        return vector
+
+
 class VectorStoreService:
     """
     ChromaDB vektör veritabanı servisi.
     
     Tarifleri embedding'lere dönüştürüp vektör veritabanında saklar
     ve benzerlik araması yapar.
+    
+    EMBEDDING_PROVIDER:
+    - sentence_transformer: Önceden oluşturulmuş turkish_recipes vb. için (all-MiniLM-L6-v2)
+    - google: Yeni koleksiyonlar veya Google embeddings ile indexlenmiş DB için
     """
 
     _client: chromadb.ClientAPI | None = None
     _collection: chromadb.Collection | None = None
-    _embeddings: GoogleGenerativeAIEmbeddings | None = None
+    _embeddings: GoogleGenerativeAIEmbeddings | _SentenceTransformerEmbeddingAdapter | None = None
 
     def __init__(self):
         pass
 
     @classmethod
-    def _get_embeddings(cls) -> GoogleGenerativeAIEmbeddings:
+    def _get_embeddings(cls):
         """Embedding modeli singleton olarak döner."""
         if cls._embeddings is None:
-            cls._embeddings = GoogleGenerativeAIEmbeddings(
-                model=settings.EMBEDDING_MODEL,
-                google_api_key=settings.GEMINI_API_KEY,
-            )
+            if settings.EMBEDDING_PROVIDER == "sentence_transformer":
+                cls._embeddings = _SentenceTransformerEmbeddingAdapter(
+                    settings.EMBEDDING_MODEL_SENTENCE_TRANSFORMER
+                )
+                logger.info("Embedding: sentence_transformer (%s)", settings.EMBEDDING_MODEL_SENTENCE_TRANSFORMER)
+            else:
+                cls._embeddings = GoogleGenerativeAIEmbeddings(
+                    model=settings.EMBEDDING_MODEL,
+                    google_api_key=settings.GEMINI_API_KEY,
+                )
+                logger.info("Embedding: Google (%s)", settings.EMBEDDING_MODEL)
         return cls._embeddings
 
     @classmethod
@@ -94,9 +120,11 @@ class VectorStoreService:
         )
 
         documents = []
-        for i in range(len(results["ids"][0])):
+        ids = results.get("ids", [[]])
+        ids_list = ids[0] if ids else []
+        for i in range(len(ids_list)):
             documents.append({
-                "id": results["ids"][0][i],
+                "id": ids_list[i],
                 "text": results["documents"][0][i],
                 "metadata": results["metadatas"][0][i],
                 "distance": results["distances"][0][i],

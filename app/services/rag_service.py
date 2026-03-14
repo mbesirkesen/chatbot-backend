@@ -4,16 +4,19 @@ from langchain_core.prompts import ChatPromptTemplate
 from app.core.config import get_settings
 from app.core.logging import logger
 from app.domain.interfaces import IVectorStore
+from app.services.translation import translate_query_for_search, get_no_result_message
 
 settings = get_settings()
 
 RAG_SYSTEM_PROMPT = """\
-Sen bir Türk mutfağı uzmanı yemek tarifi asistanısın. \
-Kullanıcının sorularına aşağıdaki tarif bilgilerine dayanarak cevap ver. \
-Eğer verilen tariflerde soruyla ilgili yeterli bilgi yoksa, bunu dürüstçe belirt. \
-Cevaplarını Türkçe ver ve samimi bir dil kullan.
+You are a helpful recipe assistant. The recipe database is in English.
+Answer the user's question based ONLY on the recipes below.
+If the recipes don't contain enough relevant info, say so honestly.
 
-### Bulunan Tarifler:
+IMPORTANT: Respond in the SAME LANGUAGE the user wrote their question in.
+(e.g. Turkish question -> Turkish answer, English question -> English answer)
+
+### Recipes found:
 {context}
 """
 
@@ -59,13 +62,13 @@ class RAGService:
         """
         logger.info("RAG sorgusu başlatıldı: '%s'", question)
 
-        relevant_docs = await self._vector_store.search(question, n_results=n_results)
+        search_query = await translate_query_for_search(question)
+        relevant_docs = await self._vector_store.search(search_query, n_results=n_results)
 
         if not relevant_docs:
             logger.warning("Vektör aramasında sonuç bulunamadı: '%s'", question)
             return {
-                "answer": "Üzgünüm, bu konuda veritabanımda yeterli tarif bulamadım. "
-                          "Lütfen farklı bir soru sormayı deneyin.",
+                "answer": get_no_result_message(question),
                 "source_ids": [],
             }
 

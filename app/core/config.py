@@ -26,10 +26,14 @@ class Settings(BaseSettings):
     # Opsiyonel - makul default değerler
     DEBUG: bool = False
     LOG_LEVEL: str = "INFO"
-    GEMINI_MODEL: str = "gemini-2.0-flash"
+    GEMINI_MODEL: str = "gemini-2.5-flash"
     CHROMA_PERSIST_DIR: str = "./chroma_data"
     CHROMA_COLLECTION_NAME: str = "recipes"
     EMBEDDING_MODEL: str = "models/embedding-001"
+    # sentence_transformer: Önceden oluşturulmuş DB (örn. turkish_recipes) için
+    # google: Yeni oluşturacağın veya Google ile indexlenmiş DB için
+    EMBEDDING_PROVIDER: str = "google"
+    EMBEDDING_MODEL_SENTENCE_TRANSFORMER: str = "all-MiniLM-L6-v2"
 
     model_config = {
         "env_file": ".env",
