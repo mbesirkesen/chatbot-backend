@@ -51,6 +51,10 @@ class VectorStoreService:
                     settings.EMBEDDING_MODEL_SENTENCE_TRANSFORMER
                 )
                 logger.info("Embedding: sentence_transformer (%s)", settings.EMBEDDING_MODEL_SENTENCE_TRANSFORMER)
+            elif settings.EMBEDDING_PROVIDER == "default":
+                # ChromaDB uses its own default embedding function if None is passed to Collection.add
+                cls._embeddings = None
+                logger.info("Embedding: ChromaDB Default (all-MiniLM-L6-v2 ONNX)")
             else:
                 cls._embeddings = GoogleGenerativeAIEmbeddings(
                     model=settings.EMBEDDING_MODEL,
@@ -96,12 +100,15 @@ class VectorStoreService:
     ) -> None:
         """Tarifi vektör veritabanına ekler/günceller."""
         embeddings = self._get_embeddings()
-        vector = await embeddings.aembed_query(text)
+        
+        vector = None
+        if embeddings is not None:
+             vector = await embeddings.aembed_query(text)
 
         collection = self._get_collection()
         collection.upsert(
             ids=[recipe_id],
-            embeddings=[vector],
+            embeddings=[vector] if vector else None,
             documents=[text],
             metadatas=[metadata or {}],
         )
@@ -110,14 +117,23 @@ class VectorStoreService:
     async def search(self, query: str, n_results: int = 5) -> list[dict]:
         """Sorguya benzer dokümanları arar."""
         embeddings = self._get_embeddings()
-        query_vector = await embeddings.aembed_query(query)
-
+        
         collection = self._get_collection()
-        results = collection.query(
-            query_embeddings=[query_vector],
-            n_results=n_results,
-            include=["documents", "metadatas", "distances"],
-        )
+        
+        if embeddings is not None:
+            query_vector = await embeddings.aembed_query(query)
+            results = collection.query(
+                query_embeddings=[query_vector],
+                n_results=n_results,
+                include=["documents", "metadatas", "distances"],
+            )
+        else:
+            # ChromaDB uses its own default embedding function
+            results = collection.query(
+                query_texts=[query],
+                n_results=n_results,
+                include=["documents", "metadatas", "distances"],
+            )
 
         documents = []
         ids = results.get("ids", [[]])
