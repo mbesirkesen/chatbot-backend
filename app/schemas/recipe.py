@@ -62,6 +62,22 @@ class ChatRequest(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list, max_length=20)
 
 
+class SimpleRecipeResponse(BaseModel):
+    """ChromaDB'den gelen tarif bilgileri için basit response."""
+    id: str
+    title: str
+    description: str | None = None
+    ingredients: list[str] = []
+    instructions: str = ""
+    cuisine: str | None = None
+    category: str | None = None
+    prep_time_minutes: int | None = None
+    cook_time_minutes: int | None = None
+    servings: int | None = None
+    difficulty: str | None = None
+    rating: float | None = None
+
+
 class ChatResponse(BaseModel):
     answer: str
-    sources: list[RecipeResponse] = []
+    sources: list[SimpleRecipeResponse] = []

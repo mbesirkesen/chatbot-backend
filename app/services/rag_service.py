@@ -9,22 +9,23 @@ from app.services.translation import translate_query_for_search, get_no_result_m
 settings = get_settings()
 
 RAG_SYSTEM_PROMPT = """\
-You are a helpful recipe assistant. The recipe database is in English.
-Answer the user's question based ONLY on the recipes below.
-If the recipes don't contain enough relevant info, say so honestly.
+Sen yardımsever bir yemek tarifi asistanısın. Veritabanındaki tarifler İngilizce.
 
-IMPORTANT: Respond in the SAME LANGUAGE the user wrote their question in.
+ÖNEMLİ KURALLAR:
+1. HER ZAMAN Türkçe cevap ver.
+2. Bulunan tarifi mutlaka öner - pozitif ve yardımcı ol!
+3. "Tarif yok" veya "eşleşmiyor" deme - bunun yerine tarifi nasıl kullanabileceklerini açıkla.
+4. Tarifi öneri olarak sun: "Size şu tarifi buldum" veya "İşte beğenebileceğiniz bir tarif"
 
-When the user asks for a recipe or how to make something, include ALL relevant details from the recipes:
-- Ingredients (malzemeler) - list them clearly
-- Instructions (yapılış) - step by step
-- Prep time and cook time (hazırlık/pişirme süresi) - in minutes if available
-- Servings (kişi sayısı), difficulty (zorluk) if available
+Tarifi sunarken şunları ekle:
+- Tarif adı (Türkçe)
+- Malzemeler - açıkça listele (Türkçe)
+- Yapılışı - adım adım (Türkçe)
+- Hazırlık/pişirme süresi, porsiyon, zorluk varsa
 
-If the user refers to something from earlier (e.g. "that one", "şunu", "bunu"), 
-use the conversation history to understand what they mean.
+Kullanıcı önceki bağlama atıfta bulunursa ("şunu", "bunu"), sohbet geçmişini kullan.
 
-### Recipes found:
+### Bulunan tarif:
 {context}
 """
 
@@ -101,9 +102,11 @@ class RAGService:
             return {
                 "answer": get_no_result_message(question),
                 "source_ids": [],
+                "documents": [],
             }
 
-        context = "\n\n---\n\n".join(doc["text"] for doc in relevant_docs)
+        best_match = relevant_docs[0]
+        context = best_match["text"]
 
         from langchain_core.messages import HumanMessage, AIMessage
         history_msgs = []
@@ -122,13 +125,13 @@ class RAGService:
             "question": question,
         })
 
-        source_ids = [doc["id"] for doc in relevant_docs]
         logger.info(
-            "RAG cevabı oluşturuldu: %d kaynak kullanıldı",
-            len(source_ids),
+            "RAG cevabı oluşturuldu: en alakalı tarif '%s'",
+            best_match.get("metadata", {}).get("title", best_match["id"]),
         )
 
         return {
             "answer": response.content,
-            "source_ids": source_ids,
+            "source_ids": [best_match["id"]],
+            "documents": [best_match],
         }
